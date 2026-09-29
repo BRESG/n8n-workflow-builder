@@ -1,0 +1,356 @@
+{
+  "name": "Support ticket tagging",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "support-ticket",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "af5790d4-ae69-fe6a-ebee-81cc25971a5c",
+      "name": "New ticket",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SHOPIFY_ADMIN_URL }}/orders.json?email={{ $json.from_email }}&limit=1",
+        "sendBody": false,
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          },
+          "retry": {
+            "retryOnFail": true,
+            "maxTries": 2,
+            "waitBetweenTries": 2000
+          }
+        }
+      },
+      "id": "e97dd07e-a96c-e200-ec1a-40b8dd9a47fa",
+      "name": "Recent order from Shopify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MODEL_ENDPOINT }}",
+        "sendBody": true,
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          },
+          "retry": {
+            "retryOnFail": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000
+          }
+        },
+        "specifyBody": "json",
+        "jsonBody": {
+          "message": "={{ $json.body }}",
+          "order_context": "={{ $json.order }}",
+          "allowed_labels": [
+            "refund",
+            "shipping",
+            "damaged",
+            "order_change",
+            "stock"
+          ],
+          "response_format": "json"
+        }
+      },
+      "id": "15c5bb12-e10e-aa97-ca9e-8bb6e5ebf322",
+      "name": "Classify the ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allowed = new Set([\"refund\", \"shipping\", \"damaged\", \"order_change\", \"stock\"]);\nreturn items.map(item => {\n  const label = item.json.label;\n  const confidence = Number(item.json.confidence ?? 0);\n  const usable = allowed.has(label) && confidence >= 0.6;\n  return { json: { ...item.json, usable } };\n});"
+      },
+      "id": "d7b37292-614a-c6fa-48c9-63fdef6b1142",
+      "name": "Reject an invented tag",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "notes": "The model is asked for one of a fixed list. This step checks the answer is on that list before anything is written. An unsure answer is marked unusable rather than guessed.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.usable === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7f429bc1-7e39-5487-fb44-924ec1daa38e",
+      "name": "Confident and on the list",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "notes": "Everything else falls through to a person.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.HELPDESK_URL }}/tickets/{{ $json.ticket_id }}/tags",
+        "sendBody": true,
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          },
+          "retry": {
+            "retryOnFail": true,
+            "maxTries": 2,
+            "waitBetweenTries": 2000
+          }
+        },
+        "specifyBody": "json",
+        "jsonBody": {
+          "tags": "={{ [$json.label] }}"
+        }
+      },
+      "id": "3d0c8f01-f490-c484-6743-e98d06bae8b2",
+      "name": "Write the tag back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-0",
+              "name": "queue",
+              "value": "manual_review",
+              "type": "string"
+            },
+            {
+              "id": "assign-1",
+              "name": "reason",
+              "value": "={{ $json.usable ? 'call failed' : 'low confidence or unknown tag' }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-2",
+              "name": "ticket_id",
+              "value": "={{ $json.ticket_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "14503472-a8a4-0137-cf6b-0cc25bf787e5",
+      "name": "Send to a human",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => ({ json: {\n  ticket_id: item.json.ticket_id,\n  label: item.json.label ?? null,\n  confidence: item.json.confidence ?? null,\n  cost_usd: item.json.cost_usd ?? null,\n  at: new Date().toISOString(),\n} }));"
+      },
+      "id": "0553ece8-3543-7f16-6d85-521a5239ecc6",
+      "name": "Log tag and cost",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ],
+      "notes": "One row per ticket. Volume is what makes this expensive, so the cost per call is recorded rather than discovered on the bill.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {},
+      "id": "daa4467c-af93-94aa-7625-ead6342b37dd",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "New ticket": {
+      "main": [
+        [
+          {
+            "node": "Recent order from Shopify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recent order from Shopify": {
+      "main": [
+        [
+          {
+            "node": "Classify the ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send to a human",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify the ticket": {
+      "main": [
+        [
+          {
+            "node": "Reject an invented tag",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send to a human",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reject an invented tag": {
+      "main": [
+        [
+          {
+            "node": "Confident and on the list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confident and on the list": {
+      "main": [
+        [
+          {
+            "node": "Write the tag back",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send to a human",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write the tag back": {
+      "main": [
+        [
+          {
+            "node": "Log tag and cost",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send to a human",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log tag and cost": {
+      "main": [
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to a human": {
+      "main": [
+        [
+          {
+            "node": "Log tag and cost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

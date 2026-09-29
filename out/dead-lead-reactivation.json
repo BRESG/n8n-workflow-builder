@@ -1,0 +1,392 @@
+{
+  "name": "Dead lead reactivation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "60e2897e-054d-de8a-c61d-bb4983e500ad",
+      "name": "Every weekday 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "b0a1f29a-404f-ea0c-6cfb-ec68b2fef7ec",
+      "name": "Read lead list",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.email && $json.status !== 'contacted' && $json.opted_out !== true && $json.days_since_contact >= 90 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "783b91d8-2555-fa3a-b8a3-69ddbdbb62d8",
+      "name": "Only eligible leads",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ],
+      "notes": "Runs before the model so nothing is spent on a lead that was never eligible. Opt-out is checked here, not later.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "batchSize": 25,
+        "options": {}
+      },
+      "id": "958c2fa6-348d-6839-9fce-165cf1c912e2",
+      "name": "In batches of 25",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DRAFTING_ENDPOINT }}",
+        "sendBody": true,
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          },
+          "retry": {
+            "retryOnFail": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000
+          }
+        },
+        "specifyBody": "json",
+        "jsonBody": {
+          "lead": "={{ $json }}",
+          "allowed_tone": "plain",
+          "max_words": 90
+        }
+      },
+      "id": "e181cf2a-95a4-ba80-734f-dcf46e1bf9bc",
+      "name": "Draft the message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        150
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SEND_ENDPOINT }}",
+        "sendBody": true,
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          },
+          "retry": {
+            "retryOnFail": true,
+            "maxTries": 2,
+            "waitBetweenTries": 2000
+          }
+        },
+        "specifyBody": "json",
+        "jsonBody": {
+          "to": "={{ $json.email }}",
+          "body": "={{ $json.draft }}"
+        }
+      },
+      "id": "0b348e69-2ab8-085b-cfaf-d5ba1909eea4",
+      "name": "Send it",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        150
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-0",
+              "name": "channel",
+              "value": "email",
+              "type": "string"
+            },
+            {
+              "id": "assign-1",
+              "name": "contacted_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-2",
+              "name": "status",
+              "value": "contacted",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "507e2cf7-8c52-dfce-e1ba-8957f48feabe",
+      "name": "Mark contacted",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "lead_id"
+          ]
+        },
+        "options": {}
+      },
+      "id": "a9df9bf7-e0f0-5545-326d-4bf790579454",
+      "name": "Write back to the sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "exceptions",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "lead_id"
+          ]
+        },
+        "options": {}
+      },
+      "id": "3edf7b98-6ddd-65b8-4002-566a2d481441",
+      "name": "Exception queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        150
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "43cf98ef-d951-4479-84a0-c5398dc5c392",
+      "name": "Next batch",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        0
+      ],
+      "notes": "Loops back until the list is done.",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Every weekday 9am": {
+      "main": [
+        [
+          {
+            "node": "Read lead list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read lead list": {
+      "main": [
+        [
+          {
+            "node": "Only eligible leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only eligible leads": {
+      "main": [
+        [
+          {
+            "node": "In batches of 25",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In batches of 25": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Draft the message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft the message": {
+      "main": [
+        [
+          {
+            "node": "Send it",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Exception queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send it": {
+      "main": [
+        [
+          {
+            "node": "Mark contacted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Exception queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark contacted": {
+      "main": [
+        [
+          {
+            "node": "Write back to the sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write back to the sheet": {
+      "main": [
+        [
+          {
+            "node": "Next batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Next batch": {
+      "main": [
+        [
+          {
+            "node": "In batches of 25",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
